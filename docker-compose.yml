@@ -1,0 +1,59 @@
+x-app: &app
+  build: .
+  environment: &app-env
+    DATABASE_URL: postgres://wager:wager@postgres:5432/wager
+    SQS_ENDPOINT: http://localstack:4566
+    AWS_REGION: us-east-1
+    AWS_ACCESS_KEY_ID: test
+    AWS_SECRET_ACCESS_KEY: test
+    PORT: "3000"
+  depends_on:
+    postgres: { condition: service_healthy }
+    localstack: { condition: service_healthy }
+    migrate: { condition: service_completed_successfully }
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: wager
+      POSTGRES_PASSWORD: wager
+      POSTGRES_DB: wager
+    ports: ["5432:5432"]
+    command: ["postgres", "-c", "max_connections=300"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wager -d wager"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  localstack:
+    image: localstack/localstack:3.8
+    environment:
+      SERVICES: sqs
+    ports: ["4566:4566"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health | grep -q '\"sqs\": \"running\"'"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  # One-shot migration job: avoids N instances racing on the migrations table.
+  migrate:
+    build: .
+    command: ["bun", "run", "migrate:up"]
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # Three identical instances behind different host ports: the system is
+  # designed to be correct with N>1 instances against the same database.
+  app1:
+    <<: *app
+    ports: ["3001:3000"]
+  app2:
+    <<: *app
+    ports: ["3002:3000"]
+  app3:
+    <<: *app
+    ports: ["3003:3000"]
